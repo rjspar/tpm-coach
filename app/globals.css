@@ -1,26 +1,31 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/*
+  Walk Your Talk huisstijl
+  Fonts worden via next/font geladen in layout.tsx en als CSS-variabelen
+  (--font-montserrat / --font-playfair) op <html> gezet.
+*/
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* Kleurenpalet */
+  --color-forest: #0d654a;
+  --color-sage: #59a991;
+  --color-amber: #e19c55;
+  --color-mint: #e6f3ea;
+  --color-sand: #d6c9af;
+  --color-ink: #1a1a1a;
+
+  /* Fonts */
+  --font-sans: var(--font-montserrat), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-playfair), Georgia, serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-mint);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
 }
