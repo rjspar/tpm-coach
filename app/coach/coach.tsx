@@ -15,6 +15,12 @@ import { useSpeechRecognition } from "./use-speech-recognition";
 
 type StreamError = "expired" | "unreachable";
 
+// Stil WAV-fragment om het audio-element te "ontgrendelen" bij een
+// gebruikersgebaar, zodat het daarna ook later programmatisch mag spelen
+// (anders blokkeert de browser de stem bij vervolgantwoorden).
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+
 async function streamResponse(
   body: object,
   onDelta: (full: string) => void,
@@ -79,7 +85,8 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
   const [voiceOn, setVoiceOn] = useState(false);
   const [voiceUnavailable, setVoiceUnavailable] = useState(false);
   const voiceOnRef = useRef(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const unlockedRef = useRef(false);
   const audioCacheRef = useRef<Map<string, string>>(new Map());
 
   const reportRef = useRef<HTMLDivElement>(null);
@@ -101,11 +108,38 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
     voiceOnRef.current = voiceOn;
   }, [voiceOn]);
 
-  const stopAudio = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
+  // Eén vast, herbruikbaar audio-element.
+  const getAudioEl = useCallback(() => {
+    if (!audioElRef.current) audioElRef.current = new Audio();
+    return audioElRef.current;
+  }, []);
+
+  // Ontgrendel het element binnen een gebruikersgebaar (klik/Enter), zodat het
+  // ook later (na het streamen) mag afspelen. Eénmalig nodig.
+  const unlockAudio = useCallback(() => {
+    if (unlockedRef.current) return;
+    const el = getAudioEl();
+    try {
+      el.muted = true;
+      el.src = SILENT_WAV;
+      const p = el.play();
+      if (p) {
+        p.then(() => {
+          el.pause();
+          el.currentTime = 0;
+          el.muted = false;
+          unlockedRef.current = true;
+        }).catch(() => {
+          el.muted = false;
+        });
+      }
+    } catch {
+      el.muted = false;
     }
+  }, [getAudioEl]);
+
+  const stopAudio = useCallback(() => {
+    if (audioElRef.current) audioElRef.current.pause();
   }, []);
 
   const clearAudioCache = useCallback(() => {
@@ -115,13 +149,15 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
 
   const playUrl = useCallback(
     async (url: string) => {
-      stopAudio();
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.onended = stopAudio;
-      await audio.play();
+      const el = getAudioEl();
+      el.pause();
+      el.muted = false;
+      el.src = url;
+      el.currentTime = 0;
+      unlockedRef.current = true;
+      await el.play();
     },
-    [stopAudio],
+    [getAudioEl],
   );
 
   const speak = useCallback(
@@ -224,6 +260,9 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
   function handleSend() {
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
+    // Binnen het klik/Enter-gebaar het audio-element ontgrendelen, zodat het
+    // antwoord straks (na het streamen) ook echt mag worden voorgelezen.
+    if (voiceOn) unlockAudio();
     stopAudio();
     const history: ChatMessage[] = [
       ...messages,
