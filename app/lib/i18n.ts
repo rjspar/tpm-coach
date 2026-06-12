@@ -68,9 +68,8 @@ export const UI: Record<Lang, UIStrings> = {
     generatingReport: "Rapport wordt gemaakt…",
     reportFilename: "TPM-rapport.pdf",
     reportTitle: "TPM Coachrapport",
-    whisperBefore: "Tip: met ",
-    whisperAfter:
-      " praat je in élk veld in plaats van te typen — fijner voor een open gesprek.",
+    whisperBefore: "Op desktop: met ",
+    whisperAfter: " dicteer je in élk veld in plaats van te typen.",
     voiceUnavailable:
       "De stem is nog niet geconfigureerd (ElevenLabs-key/voice-id ontbreekt in .env.local).",
     errSessionExpired: "Je sessie is verlopen. Log opnieuw in.",
@@ -104,9 +103,8 @@ export const UI: Record<Lang, UIStrings> = {
     generatingReport: "Generating report…",
     reportFilename: "TPM-report.pdf",
     reportTitle: "TPM Coaching Report",
-    whisperBefore: "Tip: with ",
-    whisperAfter:
-      " you can speak into any field instead of typing — nicer for an open conversation.",
+    whisperBefore: "On desktop: with ",
+    whisperAfter: " you can dictate into any field instead of typing.",
     voiceUnavailable:
       "The voice isn't configured yet (ElevenLabs key/voice id missing in .env.local).",
     errSessionExpired: "Your session has expired. Please log in again.",
