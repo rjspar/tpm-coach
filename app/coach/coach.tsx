@@ -93,17 +93,27 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
   const pendingPdfRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Spraak naar tekst (mic-knop)
-  const appendTranscript = useCallback(
-    (text: string) => setInput((prev) => (prev ? `${prev} ${text}` : text)),
-    [],
-  );
+  // Spraakinvoer (opname → Scribe)
   const {
     supported: micSupported,
     recording,
     transcribing,
-    toggle: toggleMic,
-  } = useDictation(appendTranscript, lang);
+    openMic,
+    closeMic,
+    recordUtterance,
+    stopUtterance,
+  } = useDictation(lang);
+
+  // Gespreksmodus (hands-free, Niveau 2)
+  const [conversation, setConversation] = useState(false);
+  const conversationRef = useRef(false);
+  const convLoopRef = useRef(false);
+
+  // Actuele berichten voor de async gesprekslus.
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   useEffect(() => {
     voiceOnRef.current = voiceOn;
@@ -148,16 +158,31 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
     audioCacheRef.current.clear();
   }, []);
 
+  // Speelt af en resolvet wanneer het geluid klaar is (of stopt/faalt) —
+  // zodat de gesprekslus kan wachten tot de coach is uitgesproken.
   const playUrl = useCallback(
-    async (url: string) => {
-      const el = getAudioEl();
-      el.pause();
-      el.muted = false;
-      el.src = url;
-      el.currentTime = 0;
-      unlockedRef.current = true;
-      await el.play();
-    },
+    (url: string) =>
+      new Promise<void>((resolve) => {
+        const el = getAudioEl();
+        el.onended = null;
+        el.onerror = null;
+        el.onpause = null;
+        el.pause();
+        el.muted = false;
+        el.src = url;
+        el.currentTime = 0;
+        unlockedRef.current = true;
+        const done = () => {
+          el.onended = null;
+          el.onerror = null;
+          el.onpause = null;
+          resolve();
+        };
+        el.onended = done;
+        el.onerror = done;
+        el.onpause = done;
+        el.play().catch(done);
+      }),
     [getAudioEl],
   );
 
@@ -203,23 +228,28 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
     return fallback;
   }
 
-  async function runAssistant(history: ChatMessage[]) {
+  async function runAssistant(
+    history: ChatMessage[],
+  ): Promise<{ ttsPromise: Promise<void> | null }> {
     setError(null);
     setIsStreaming(true);
     stopAudio();
     setMessages([...history, { role: "assistant", content: "" }]);
+    let ttsPromise: Promise<void> | null = null;
     try {
       const full = await streamResponse({ messages: history, lang }, (acc) => {
         setMessages([...history, { role: "assistant", content: acc }]);
       });
       setMessages([...history, { role: "assistant", content: full }]);
-      if (voiceOnRef.current && full.trim()) void speak(full);
+      // TTS draait op de achtergrond; isStreaming gaat al uit na het streamen.
+      if (voiceOnRef.current && full.trim()) ttsPromise = speak(full);
     } catch (err) {
       setMessages(history);
       setError(describeError(err, t.errGeneric));
     } finally {
       setIsStreaming(false);
     }
+    return { ttsPromise };
   }
 
   // Autoscroll bij nieuwe inhoud.
@@ -250,6 +280,7 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
   }, [report, t.reportFilename, t.errDownloadFailed]);
 
   function resetSession(toLang: Lang) {
+    if (conversationRef.current) stopConversation();
     stopAudio();
     clearAudioCache();
     setMessages([KICKOFF[toLang], WELCOME[toLang]]);
@@ -271,6 +302,70 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
     ];
     setInput("");
     void runAssistant(history);
+  }
+
+  // Niveau 1 — tik om te praten: één opname → tekst in het invoerveld.
+  async function toggleTapToTalk() {
+    if (recording) {
+      stopUtterance();
+      return;
+    }
+    const ok = await openMic();
+    if (!ok) return;
+    const text = await recordUtterance();
+    closeMic();
+    if (text) setInput((prev) => (prev ? `${prev} ${text}` : text));
+  }
+
+  // Niveau 2 — gespreksmodus: doorlopend luisteren → versturen → coach → opnieuw.
+  async function conversationLoop() {
+    if (convLoopRef.current) return;
+    convLoopRef.current = true;
+    try {
+      while (conversationRef.current) {
+        const text = await recordUtterance();
+        if (!conversationRef.current) break;
+        if (!text) continue; // niets gehoord → blijf luisteren
+        const history: ChatMessage[] = [
+          ...messagesRef.current,
+          { role: "user", content: text },
+        ];
+        const { ttsPromise } = await runAssistant(history);
+        if (ttsPromise) {
+          try {
+            await ttsPromise; // wacht tot de coach is uitgesproken (geen echo)
+          } catch {
+            /* negeren */
+          }
+        }
+      }
+    } finally {
+      convLoopRef.current = false;
+    }
+  }
+
+  function stopConversation() {
+    conversationRef.current = false;
+    setConversation(false);
+    closeMic();
+  }
+
+  async function startConversation() {
+    unlockAudio(); // binnen het gebaar, zodat de coach-stem later mag spelen
+    if (!voiceOnRef.current) {
+      voiceOnRef.current = true;
+      setVoiceOn(true); // gespreksmodus = de coach praat ook terug
+    }
+    const ok = await openMic();
+    if (!ok) return;
+    conversationRef.current = true;
+    setConversation(true);
+    void conversationLoop();
+  }
+
+  function toggleConversation() {
+    if (conversationRef.current) stopConversation();
+    else void startConversation();
   }
 
   async function handleReport() {
@@ -390,76 +485,115 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
       {/* Onderbalk */}
       <div className="border-t border-sand/60 bg-mint/90 px-4 py-4 backdrop-blur">
         <div className="mx-auto flex max-w-[720px] flex-col gap-3">
-          {phasesComplete && (
-            <button
-              onClick={handleReport}
-              disabled={isGeneratingReport || isStreaming}
-              className="self-center rounded-xl bg-amber px-6 py-2.5 text-sm font-semibold text-forest shadow-sm transition hover:brightness-105 disabled:opacity-60"
-            >
-              {isGeneratingReport ? t.generatingReport : t.downloadReport}
-            </button>
-          )}
-
-          <div className="flex items-end gap-2">
-            {micSupported && (
+          {conversation ? (
+            <div className="flex flex-col items-center gap-3 py-2">
+              <p className="text-center text-sm font-medium text-forest">
+                {t.conversationActive}
+              </p>
+              <div className="flex h-5 items-center gap-2 text-xs text-ink/50">
+                {recording ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-amber" />
+                    {t.inputListening}
+                  </span>
+                ) : transcribing ? (
+                  <span>{t.transcribing}</span>
+                ) : null}
+              </div>
               <button
-                onClick={toggleMic}
-                disabled={isStreaming || transcribing}
-                title={recording ? t.micStop : t.micStart}
-                aria-label={recording ? t.micStop : t.micStart}
-                className={`shrink-0 rounded-xl px-3 py-3 transition disabled:opacity-50 ${
-                  recording
-                    ? "animate-pulse bg-amber text-forest"
-                    : "bg-white text-forest/70 hover:text-forest"
-                }`}
+                onClick={toggleConversation}
+                className="rounded-xl bg-forest px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-amber hover:text-forest"
               >
-                <MicIcon />
+                {t.conversationStop}
               </button>
-            )}
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              rows={1}
-              placeholder={
-                recording
-                  ? t.inputListening
-                  : transcribing
-                    ? t.transcribing
-                    : t.inputPlaceholder
-              }
-              disabled={isStreaming}
-              className="max-h-40 min-h-[48px] flex-1 resize-none rounded-xl border border-sand bg-white px-4 py-3 text-ink outline-none transition focus:border-forest focus:ring-2 focus:ring-forest/20 disabled:opacity-60"
-            />
-            <button
-              onClick={handleSend}
-              disabled={isStreaming || !input.trim()}
-              className="rounded-xl bg-forest px-5 py-3 font-medium text-white transition hover:bg-amber hover:text-forest disabled:opacity-50"
-            >
-              {t.send}
-            </button>
-          </div>
+            </div>
+          ) : (
+            <>
+              {phasesComplete && (
+                <button
+                  onClick={handleReport}
+                  disabled={isGeneratingReport || isStreaming}
+                  className="self-center rounded-xl bg-amber px-6 py-2.5 text-sm font-semibold text-forest shadow-sm transition hover:brightness-105 disabled:opacity-60"
+                >
+                  {isGeneratingReport ? t.generatingReport : t.downloadReport}
+                </button>
+              )}
 
-          <p className="text-center text-xs text-ink/40">
-            {t.whisperBefore}
-            <a
-              href="https://wisprflow.ai"
-              target="_blank"
-              rel="noreferrer"
-              className="underline decoration-sage/60 underline-offset-2 hover:text-ink/70"
-            >
-              Whisper&nbsp;Flow
-            </a>
-            {t.whisperAfter}
-          </p>
+              <div className="flex items-end gap-2">
+                {micSupported && (
+                  <button
+                    onClick={toggleTapToTalk}
+                    disabled={isStreaming || transcribing}
+                    title={recording ? t.micStop : t.micStart}
+                    aria-label={recording ? t.micStop : t.micStart}
+                    className={`shrink-0 rounded-xl px-3 py-3 transition disabled:opacity-50 ${
+                      recording
+                        ? "animate-pulse bg-amber text-forest"
+                        : "bg-white text-forest/70 hover:text-forest"
+                    }`}
+                  >
+                    <MicIcon />
+                  </button>
+                )}
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSend();
+                    }
+                  }}
+                  rows={1}
+                  placeholder={
+                    recording
+                      ? t.inputListening
+                      : transcribing
+                        ? t.transcribing
+                        : t.inputPlaceholder
+                  }
+                  disabled={isStreaming}
+                  className="max-h-40 min-h-[48px] flex-1 resize-none rounded-xl border border-sand bg-white px-4 py-3 text-ink outline-none transition focus:border-forest focus:ring-2 focus:ring-forest/20 disabled:opacity-60"
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={isStreaming || !input.trim()}
+                  className="rounded-xl bg-forest px-5 py-3 font-medium text-white transition hover:bg-amber hover:text-forest disabled:opacity-50"
+                >
+                  {t.send}
+                </button>
+              </div>
 
-          {voiceUnavailable && (
-            <p className="text-center text-xs text-amber">{t.voiceUnavailable}</p>
+              {micSupported && (
+                <button
+                  onClick={toggleConversation}
+                  disabled={isStreaming}
+                  className="self-center flex items-center gap-2 rounded-full border border-sage/50 bg-white px-4 py-2 text-xs font-medium text-forest/80 transition hover:text-forest disabled:opacity-50"
+                >
+                  <LoopIcon />
+                  {t.conversationStart}
+                </button>
+              )}
+
+              <p className="text-center text-xs text-ink/40">
+                {t.whisperBefore}
+                <a
+                  href="https://wisprflow.ai"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline decoration-sage/60 underline-offset-2 hover:text-ink/70"
+                >
+                  Whisper&nbsp;Flow
+                </a>
+                {t.whisperAfter}
+              </p>
+
+              {voiceUnavailable && (
+                <p className="text-center text-xs text-amber">
+                  {t.voiceUnavailable}
+                </p>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -549,6 +683,27 @@ function Dot({ delay }: { delay: string }) {
       className="h-2 w-2 animate-bounce rounded-full bg-sage"
       style={{ animationDelay: delay }}
     />
+  );
+}
+
+function LoopIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M4 12a8 8 0 0 1 13.7-5.6L20 8M20 12a8 8 0 0 1-13.7 5.6L4 16"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M20 4v4h-4M4 20v-4h4"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 

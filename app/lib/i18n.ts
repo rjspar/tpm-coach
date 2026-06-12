@@ -28,6 +28,9 @@ type UIStrings = {
   send: string;
   micStart: string;
   micStop: string;
+  conversationStart: string;
+  conversationStop: string;
+  conversationActive: string;
   // Coach — rapport
   downloadReport: string;
   generatingReport: string;
@@ -64,6 +67,9 @@ export const UI: Record<Lang, UIStrings> = {
     send: "Verstuur",
     micStart: "Inspreken",
     micStop: "Stop met opnemen",
+    conversationStart: "Gespreksmodus (hands-free)",
+    conversationStop: "Gesprek stoppen",
+    conversationActive: "Gespreksmodus actief — praat gewoon, ik luister.",
     downloadReport: "Rapport downloaden",
     generatingReport: "Rapport wordt gemaakt…",
     reportFilename: "TPM-rapport.pdf",
@@ -99,6 +105,9 @@ export const UI: Record<Lang, UIStrings> = {
     send: "Send",
     micStart: "Speak",
     micStop: "Stop recording",
+    conversationStart: "Conversation mode (hands-free)",
+    conversationStop: "Stop conversation",
+    conversationActive: "Conversation mode on — just talk, I'm listening.",
     downloadReport: "Download report",
     generatingReport: "Generating report…",
     reportFilename: "TPM-report.pdf",
