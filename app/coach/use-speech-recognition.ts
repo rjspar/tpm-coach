@@ -40,16 +40,25 @@ function getConstructor(): SpeechRecognitionConstructor | null {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 }
 
-// Client-only feature-detectie zonder hydratiemismatch (useSyncExternalStore).
 const noopSubscribe = () => () => {};
 const isSupportedClient = () => getConstructor() !== null;
 const isSupportedServer = () => false;
 
 /**
- * Spraak-naar-tekst via de browser. `onFinal` krijgt elk afgerond
- * spraakfragment binnen; de aanroeper plakt dat in het invoerveld.
+ * Spraak-naar-tekst via de browser, met "blijft aan"-gedrag.
+ *
+ * Eén tik op de mic zet de intentie aan; de herkenning stopt op mobiel na
+ * elke uitspraak (onend), maar we herstarten 'm automatisch zolang de
+ * gebruiker de mic aan heeft. Tijdens het voorlezen kan de aanroeper
+ * pauseListening()/resumeListening() gebruiken zodat de coach-stem niet
+ * wordt meegetypt.
+ *
+ * `onFinal` krijgt elk afgerond spraakfragment binnen.
  */
-export function useSpeechRecognition(onFinal: (text: string) => void) {
+export function useSpeechRecognition(
+  onFinal: (text: string) => void,
+  lang = "nl-NL",
+) {
   const supported = useSyncExternalStore(
     noopSubscribe,
     isSupportedClient,
@@ -59,22 +68,47 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const onFinalRef = useRef(onFinal);
-  const listeningRef = useRef(false);
+  const keepRef = useRef(false); // gebruiker wil de mic aan houden
+  const pausedRef = useRef(false); // tijdelijk gepauzeerd (bv. tijdens voorlezen)
+  const restartTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     onFinalRef.current = onFinal;
   }, [onFinal]);
 
-  useEffect(() => {
-    listeningRef.current = listening;
-  }, [listening]);
+  const clearRestart = useCallback(() => {
+    if (restartTimer.current) {
+      clearTimeout(restartTimer.current);
+      restartTimer.current = null;
+    }
+  }, []);
+
+  // Start de herkenning robuust (vangt "already started" op met één retry).
+  const startRecognition = useCallback(() => {
+    const rec = recognitionRef.current;
+    if (!rec) return;
+    try {
+      rec.start();
+      setListening(true);
+    } catch {
+      clearRestart();
+      restartTimer.current = setTimeout(() => {
+        try {
+          rec.start();
+          setListening(true);
+        } catch {
+          /* nog steeds bezig met stoppen — laat de volgende onend het oppakken */
+        }
+      }, 300);
+    }
+  }, [clearRestart]);
 
   useEffect(() => {
     const Ctor = getConstructor();
     if (!Ctor) return;
 
     const recognition = new Ctor();
-    recognition.lang = "nl-NL";
+    recognition.lang = lang;
     recognition.continuous = true;
     recognition.interimResults = false;
 
@@ -87,30 +121,74 @@ export function useSpeechRecognition(onFinal: (text: string) => void) {
         }
       }
     };
-    recognition.onend = () => setListening(false);
-    recognition.onerror = () => setListening(false);
+
+    // Mobiel stopt na elke uitspraak — herstart automatisch als de mic aan blijft.
+    recognition.onend = () => {
+      setListening(false);
+      if (keepRef.current && !pausedRef.current) {
+        clearRestart();
+        restartTimer.current = setTimeout(() => {
+          if (keepRef.current && !pausedRef.current) startRecognition();
+        }, 300);
+      }
+    };
+
+    recognition.onerror = (event) => {
+      setListening(false);
+      // Geen toestemming → stop met proberen (anders blijft 'ie herstarten).
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        keepRef.current = false;
+        clearRestart();
+      }
+    };
 
     recognitionRef.current = recognition;
     return () => {
+      keepRef.current = false;
+      clearRestart();
       recognition.abort();
       recognitionRef.current = null;
     };
-  }, []);
+  }, [lang, startRecognition, clearRestart]);
 
+  // Aan/uit door de gebruiker.
   const toggle = useCallback(() => {
-    const recognition = recognitionRef.current;
-    if (!recognition) return;
-    try {
-      if (listeningRef.current) {
-        recognition.stop(); // onend zet listening op false
-      } else {
-        recognition.start();
-        setListening(true);
+    if (!recognitionRef.current) return;
+    if (keepRef.current) {
+      keepRef.current = false;
+      pausedRef.current = false;
+      clearRestart();
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        /* negeren */
       }
-    } catch {
-      // start() vlak na stop() kan gooien — negeren, status blijft consistent.
+      setListening(false);
+    } else {
+      keepRef.current = true;
+      pausedRef.current = false;
+      startRecognition();
     }
-  }, []);
+  }, [startRecognition, clearRestart]);
 
-  return { supported, listening, toggle };
+  // Tijdelijk pauzeren (intentie blijft aan) — bv. terwijl de coach voorleest.
+  const pauseListening = useCallback(() => {
+    if (!keepRef.current) return;
+    pausedRef.current = true;
+    clearRestart();
+    try {
+      recognitionRef.current?.stop();
+    } catch {
+      /* negeren */
+    }
+    setListening(false);
+  }, [clearRestart]);
+
+  const resumeListening = useCallback(() => {
+    if (!keepRef.current) return;
+    pausedRef.current = false;
+    startRecognition();
+  }, [startRecognition]);
+
+  return { supported, listening, toggle, pauseListening, resumeListening };
 }

@@ -102,6 +102,8 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
     supported: micSupported,
     listening,
     toggle: toggleMic,
+    pauseListening,
+    resumeListening,
   } = useSpeechRecognition(appendTranscript);
 
   useEffect(() => {
@@ -155,9 +157,12 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
       el.src = url;
       el.currentTime = 0;
       unlockedRef.current = true;
+      // Mic even pauzeren tijdens het voorlezen (geen echo), daarna hervatten.
+      pauseListening();
+      el.onended = () => resumeListening();
       await el.play();
     },
-    [getAudioEl],
+    [getAudioEl, pauseListening, resumeListening],
   );
 
   const speak = useCallback(
