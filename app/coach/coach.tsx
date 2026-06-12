@@ -11,7 +11,7 @@ import {
 import { setLangCookie, UI } from "@/app/lib/i18n";
 import ReportDocument from "./report-document";
 import { downloadNodeAsPdf } from "./report";
-import { useSpeechRecognition } from "./use-speech-recognition";
+import { useDictation } from "./use-dictation";
 
 type StreamError = "expired" | "unreachable";
 
@@ -100,11 +100,10 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
   );
   const {
     supported: micSupported,
-    listening,
+    recording,
+    transcribing,
     toggle: toggleMic,
-    pauseListening,
-    resumeListening,
-  } = useSpeechRecognition(appendTranscript);
+  } = useDictation(appendTranscript, lang);
 
   useEffect(() => {
     voiceOnRef.current = voiceOn;
@@ -157,12 +156,9 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
       el.src = url;
       el.currentTime = 0;
       unlockedRef.current = true;
-      // Mic even pauzeren tijdens het voorlezen (geen echo), daarna hervatten.
-      pauseListening();
-      el.onended = () => resumeListening();
       await el.play();
     },
-    [getAudioEl, pauseListening, resumeListening],
+    [getAudioEl],
   );
 
   const speak = useCallback(
@@ -408,11 +404,11 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
             {micSupported && (
               <button
                 onClick={toggleMic}
-                disabled={isStreaming}
-                title={listening ? t.micStop : t.micStart}
-                aria-label={listening ? t.micStop : t.micStart}
+                disabled={isStreaming || transcribing}
+                title={recording ? t.micStop : t.micStart}
+                aria-label={recording ? t.micStop : t.micStart}
                 className={`shrink-0 rounded-xl px-3 py-3 transition disabled:opacity-50 ${
-                  listening
+                  recording
                     ? "animate-pulse bg-amber text-forest"
                     : "bg-white text-forest/70 hover:text-forest"
                 }`}
@@ -430,7 +426,13 @@ export default function Coach({ initialLang }: { initialLang: Lang }) {
                 }
               }}
               rows={1}
-              placeholder={listening ? t.inputListening : t.inputPlaceholder}
+              placeholder={
+                recording
+                  ? t.inputListening
+                  : transcribing
+                    ? t.transcribing
+                    : t.inputPlaceholder
+              }
               disabled={isStreaming}
               className="max-h-40 min-h-[48px] flex-1 resize-none rounded-xl border border-sand bg-white px-4 py-3 text-ink outline-none transition focus:border-forest focus:ring-2 focus:ring-forest/20 disabled:opacity-60"
             />

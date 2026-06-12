@@ -24,6 +24,7 @@ type UIStrings = {
   // Coach — invoer
   inputPlaceholder: string;
   inputListening: string;
+  transcribing: string;
   send: string;
   micStart: string;
   micStop: string;
@@ -58,7 +59,8 @@ export const UI: Record<Lang, UIStrings> = {
     voiceOnLabel: "Stem coach uit",
     voiceOffLabel: "Stem coach aan",
     inputPlaceholder: "Typ of spreek je antwoord…",
-    inputListening: "Aan het luisteren…",
+    inputListening: "Aan het opnemen… (tik nogmaals om te stoppen)",
+    transcribing: "Spraak verwerken…",
     send: "Verstuur",
     micStart: "Inspreken",
     micStop: "Stop met opnemen",
@@ -93,7 +95,8 @@ export const UI: Record<Lang, UIStrings> = {
     voiceOnLabel: "Coach voice off",
     voiceOffLabel: "Coach voice on",
     inputPlaceholder: "Type or speak your answer…",
-    inputListening: "Listening…",
+    inputListening: "Recording… (tap again to stop)",
+    transcribing: "Processing speech…",
     send: "Send",
     micStart: "Speak",
     micStop: "Stop recording",
